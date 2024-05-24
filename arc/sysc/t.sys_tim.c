@@ -2,7 +2,7 @@
  * File:  ${te_file.tim}.${te_file.src_file_ext}
  *
  * External Entity:  Time (TIM)
- *                            
+ *
  * Description:
  * This file provides an implementation of the time functionally
  * similar to the standard Shlaer-Mellor timer functionality.
@@ -17,8 +17,10 @@
  * prototype implementation.
  * Long integers are used to store time values thus limiting the
  * duration of timers and the system ticker to about 71 minutes.
- * The sample implementation uses the localtime, mktime, ftime
- * and time library routines.
+ * The sample implementation uses the localtime, mktime, time and
+ * clock_gettime library routines.
+ * The sample implementation will use ftime where clock_gettime
+ * is not supported.
  *
  * For this example implementation to work, TIM_init() must be
  * invoked at start-up (perhaps from ${te_callout.initialization}).
@@ -31,16 +33,59 @@
  *
  * ${te_copyright.body}
  *-------------------------------------------------------------------*/
-
+#ifdef __GNUC__
+#include <features.h>
+#endif
+#if defined __USE_POSIX199309 || defined __USE_ISOC11
+#include <time.h>
 #include "${te_file.types}.${te_file.hdr_file_ext}"
-#include "${te_file.tim}.${te_file.hdr_file_ext}"
-.//#include "${te_file.callout}.${te_file.hdr_file_ext}"
-
+static clockid_t clockid = 1;
+static struct timespec systyme;
+#define USEC_CONVERT \
+1000UL
+.if ( "SystemC" == te_thread.flavor )
+#define MSEC_CONVERT 1000UL
+static ${te_prefix.type}uSec_t get_system_usec_time( void )
+{
+   return clock_gettime( clockid, &systyme );            /* Initialize the hardware ticker.   */
+}
+.else
+static ${te_prefix.type}uSec_t get_system_usec_time( void )
+{
+   ${te_prefix.type}uSec_t usec = 0;
+   if ( 0 == clock_gettime( clockid, &systyme ) )
+   {
+      usec = ( systyme.tv_sec * USEC_CONVERT * USEC_CONVERT )
+           + ( systyme.tv_nsec / USEC_CONVERT );
+   }
+   return usec;
+}
+.end if
+#else
+#include <sys/timeb.h>
+#include <time.h>
+#include "${te_file.types}.${te_file.hdr_file_ext}"
+static struct timeb systyme;
+#define USEC_CONVERT \
+1000UL
 .if ( "SystemC" == te_thread.flavor )
 #define MSEC_CONVERT 1000UL
 .end if
-#define USEC_CONVERT \
-1000UL
+static ${te_prefix.type}uSec_t get_system_usec_time( void )
+{
+.if ( "SystemC" == te_thread.flavor )
+  ftime( &systyme );            /* Initialize the hardware ticker.   */
+}
+.else
+  ftime( &systyme );
+  return ( ( systyme.time * USEC_CONVERT ) + systyme.millitm ) * USEC_CONVERT;
+}
+.end if
+#endif
+
+#include "${te_file.tim}.${te_file.hdr_file_ext}"
+.//#include "${te_file.callout}.${te_file.hdr_file_ext}"
+
 
 
 #if ${te_tim.max_timers} > 0
@@ -72,7 +117,7 @@ TIM::timer_start(
   return result;
 .else
   return (${te_prefix.type}Timer_t *) t;
-.end if  
+.end if
 }
 
 /*=====================================================================
@@ -139,7 +184,7 @@ TIM::timer_remaining_time(
     rv = ETimer_msec_time();
     rv = ( t->expiration > rv ) ? USEC_CONVERT * ( t->expiration - rv ) : 0UL;
   }
-  return ( rv );  
+  return ( rv );
 }
 
 /*=====================================================================
@@ -479,7 +524,7 @@ TIM::timer_insert_sorted(
     ETimer_time_t poptime = t->expiration;
     if ( poptime <= animate->expiration ) {          /* before head  */
       t->next = animate;
-      animate = t;         
+      animate = t;
     } else {                                         /* find bigger  */
       ETimer_t * prev = animate;
       ETimer_t * cursor;
@@ -664,8 +709,7 @@ TIM::ETimer_msec_time( void )
   t = (ETimer_time_t) (t1.to_seconds() * MSEC_CONVERT);
   return ( t - tinit );
 .else
-  ftime( &systyme );
-  t = ( systyme.time * USEC_CONVERT ) + systyme.millitm;
+  t = get_system_usec_time() / USEC_CONVERT;
   return ( t - tinit );
 .end if
 
@@ -752,11 +796,10 @@ TIM::init(\
   }
 #endif   /* if ${te_tim.max_timers} > 0 */
 .if ( "SystemC" == te_thread.flavor )
-  ftime( &systyme );            /* Initialize the hardware ticker.   */
+  get_system_usec_time( );            /* Initialize the hardware ticker.   */
   tinit = 0;
 .else
-  ftime( &systyme );            /* Initialize the hardware ticker.   */
-  tinit = ( systyme.time * USEC_CONVERT ) + systyme.millitm;
+  tinit = get_system_usec_time() / USEC_CONVERT;
 .end if
 }
 
